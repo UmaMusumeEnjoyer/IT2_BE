@@ -1,69 +1,184 @@
 package vn.udn.dut.it2.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.server.ResponseStatusException;
+import vn.udn.dut.it2.config.AiProperties;
 import vn.udn.dut.it2.model.dto.ChatDto;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class AiChatService {
 
+    private static final List<String> DEFAULT_SUGGESTIONS = Arrays.asList(
+            "Tiêu chuẩn học bổng loại Giỏi là bao nhiêu?",
+            "Điều kiện số tín chỉ tối thiểu để xét học bổng?",
+            "Thủ tục xin cấp giấy xác nhận sinh viên trực tuyến?",
+            "Hạn chót rút bớt học phần kỳ này là khi nào?"
+    );
+
+    private final AiProperties aiProperties;
+    private final RestClient aiRestClient;
+    private final ObjectMapper objectMapper;
+
     public ChatDto.Response processChat(ChatDto.Request request) {
-        String msg = request.getMessage() != null ? request.getMessage().toLowerCase() : "";
+        if ("mock".equalsIgnoreCase(aiProperties.getProvider())) {
+            return mockResponse(request.getMessage());
+        }
 
-        List<ChatDto.Citation> citations = new ArrayList<>();
-        List<String> suggestions = Arrays.asList(
-                "Tiêu chuẩn học bổng loại Giỏi là bao nhiêu?",
-                "Điều kiện số tín chỉ tối thiểu để xét học bổng?",
-                "Thủ tục xin cấp giấy xác nhận sinh viên trực tuyến?",
-                "Hạn chót rút bớt học phần kỳ này là khi nào?"
-        );
+        if (!"gemini".equalsIgnoreCase(aiProperties.getProvider())) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Unsupported AI provider: " + aiProperties.getProvider());
+        }
+        if (aiProperties.getApiKey() == null || aiProperties.getApiKey().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AI_API_KEY is not configured");
+        }
 
-        String answer;
+        JsonNode retrieval = retrieveContext(request.getMessage());
+        return generateAnswer(request, retrieval);
+    }
 
-        if (msg.contains("học bổng") || msg.contains("xuất sắc") || msg.contains("giỏi") || msg.contains("khá") || msg.contains("điểm rèn luyện")) {
-            answer = "Theo Quyết định số **1414/QĐ-ĐHBK** của Trường Đại học Bách khoa – ĐHĐN, tiêu chuẩn xét cấp Học bổng Khuyến khích Học tập gồm 3 mức:\n\n" +
-                    "- **Loại Xuất sắc:** Điểm TBCHK lần 1 $\\ge 9.00$ và Điểm rèn luyện (ĐRL) $\\ge 90$ điểm.\n" +
-                    "- **Loại Giỏi:** Điểm TBCHK lần 1 từ $8.00 - 8.99$ và ĐRL $\\ge 80$ điểm.\n" +
-                    "- **Loại Khá:** Điểm TBCHK lần 1 từ $7.00 - 7.99$ và ĐRL $\\ge 65$ điểm.\n\n" +
-                    "*Lưu ý điều kiện loại trừ:* Sinh viên phải đăng ký đủ số tín chỉ tối thiểu theo quy chế (từ 15 tín chỉ/kỳ, trừ kỳ cuối), không có học phần nào thi lần đầu dưới điểm D (hoặc dưới điểm F đối với môn điều kiện), và không bị kỷ luật từ mức khiển trách trở lên trong kỳ học.";
+    private JsonNode retrieveContext(String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("query", message);
+        payload.put("topK", aiProperties.getRetrievalTopK());
+        payload.put("top_k", aiProperties.getRetrievalTopK());
 
-            citations.add(ChatDto.Citation.builder()
+        try {
+            JsonNode response = aiRestClient.post()
+                    .uri(aiProperties.getRetrievalBaseUrl() + aiProperties.getRetrievalPath())
+                    .body(payload)
+                    .retrieve()
+                    .body(JsonNode.class);
+            if (response == null || response.isNull()) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Retrieval service returned an empty response");
+            }
+            return response;
+        } catch (RestClientException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY, "Could not retrieve context from the AI search service", exception);
+        }
+    }
+
+    private ChatDto.Response generateAnswer(ChatDto.Request request, JsonNode retrieval) {
+        String context = retrieval.has("context")
+                ? retrieval.get("context").asText()
+                : retrieval.toString();
+        String systemPrompt = aiProperties.getSystemPrompt();
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            systemPrompt = "Answer only from the supplied context and return valid JSON.";
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("systemInstruction", Map.of("parts", List.of(Map.of("text", systemPrompt))));
+        body.put("contents", List.of(Map.of(
+                "role", "user",
+                "parts", List.of(Map.of("text", "CONTEXT:\n" + context + "\n\nQUESTION:\n" + request.getMessage()))
+        )));
+        body.put("generationConfig", Map.of(
+                "temperature", 0.1,
+                "maxOutputTokens", aiProperties.getMaxOutputTokens(),
+                "responseMimeType", "application/json",
+                "responseSchema", responseSchema()
+        ));
+
+        try {
+            JsonNode response = aiRestClient.post()
+                    .uri(aiProperties.getGeminiBaseUrl() + "/v1beta/models/"
+                            + aiProperties.getModel() + ":generateContent?key=" + aiProperties.getApiKey())
+                    .body(body)
+                    .retrieve()
+                    .body(JsonNode.class);
+            String json = response == null
+                    ? ""
+                    : response.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText();
+            if (json.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini returned no answer");
+            }
+            return parseResponse(json);
+        } catch (RestClientException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini request failed", exception);
+        } catch (Exception exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini returned invalid JSON", exception);
+        }
+    }
+
+    private ChatDto.Response parseResponse(String json) throws Exception {
+        String normalized = json.trim();
+        if (normalized.startsWith("```")) {
+            normalized = normalized.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "");
+        }
+        ChatDto.Response response = objectMapper.readValue(normalized, ChatDto.Response.class);
+        if (response.getAnswer() == null || response.getAnswer().isBlank()) {
+            throw new IllegalArgumentException("AI response is missing answer");
+        }
+        if (response.getSources() == null) {
+            response.setSources(new ArrayList<>());
+        }
+        if (response.getSuggestions() == null) {
+            response.setSuggestions(DEFAULT_SUGGESTIONS);
+        }
+        return response;
+    }
+
+    private Map<String, Object> responseSchema() {
+        Map<String, Object> source = new LinkedHashMap<>();
+        source.put("type", "OBJECT");
+        source.put("properties", Map.of(
+                "documentNumber", Map.of("type", "STRING"),
+                "documentTitle", Map.of("type", "STRING"),
+                "clause", Map.of("type", "STRING"),
+                "excerpt", Map.of("type", "STRING"),
+                "pageNumber", Map.of("type", "INTEGER"),
+                "pdfUrl", Map.of("type", "STRING")
+        ));
+        source.put("required", List.of("documentNumber", "documentTitle", "clause", "excerpt", "pdfUrl"));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "OBJECT");
+        schema.put("properties", Map.of(
+                "answer", Map.of("type", "STRING"),
+                "sources", Map.of("type", "ARRAY", "items", source),
+                "suggestions", Map.of("type", "ARRAY", "items", Map.of("type", "STRING"))
+        ));
+        schema.put("required", List.of("answer", "sources"));
+        return schema;
+    }
+
+    private ChatDto.Response mockResponse(String message) {
+        String lowerMessage = message == null ? "" : message.toLowerCase();
+        List<ChatDto.Citation> sources = new ArrayList<>();
+        String answer = "Trợ lý học vụ DUT đang chạy ở chế độ mock. Hãy cấu hình AI_PROVIDER=gemini "
+                + "và AI_API_KEY để bật truy xuất văn bản và Gemini.";
+
+        if (lowerMessage.contains("học bổng") || lowerMessage.contains("giỏi")) {
+            answer = "Theo dữ liệu mẫu, tiêu chuẩn học bổng loại Giỏi là điểm học tập từ 8.00 "
+                    + "đến 8.99 và điểm rèn luyện từ 80 điểm trở lên.";
+            sources.add(ChatDto.Citation.builder()
                     .documentNumber("1414/QĐ-ĐHBK")
                     .documentTitle("Quy định xét cấp HBKKHT tại Trường ĐHBK-ĐHĐN")
                     .clause("Điều 4, Khoản 2")
-                    .excerpt("Mức học bổng loại Xuất sắc, Giỏi, Khá căn cứ vào kết quả học tập và rèn luyện lần thi thứ nhất...")
+                    .excerpt("Mức học bổng loại Giỏi căn cứ vào kết quả học tập và rèn luyện.")
                     .pdfUrl("/tai-lieu-riel/QD_1414_DHBK.pdf")
                     .build());
-        } else if (msg.contains("tín chỉ tối thiểu") || msg.contains("số tín chỉ")) {
-            answer = "Theo quy chế đào tạo tín chỉ và hướng dẫn xét học vụ:\n\n" +
-                    "- Sinh viên hệ chính quy cần tích lũy tối thiểu **15 tín chỉ** trong một học kỳ chính để đủ điều kiện xét học bổng khuyến khích học tập.\n" +
-                    "- Đối với học kỳ cuối khóa (học kỳ tốt nghiệp), số tín chỉ tối thiểu tính theo số lượng học phần/đồ án tốt nghiệp quy định trong khung CTĐT.";
-
-            citations.add(ChatDto.Citation.builder()
-                    .documentNumber("1414/QĐ-ĐHBK")
-                    .documentTitle("Quy định xét cấp HBKKHT tại Trường ĐHBK-ĐHĐN")
-                    .clause("Điều 3, Khoản 1")
-                    .excerpt("Sinh viên phải tích lũy đủ số tín chỉ tối thiểu theo quy chế đào tạo tín chỉ hiện hành...")
-                    .pdfUrl("/tai-lieu-riel/QD_1414_DHBK.pdf")
-                    .build());
-        } else if (msg.contains("giấy xác nhận") || msg.contains("nghĩa vụ quân sự") || msg.contains("thủ tục")) {
-            answer = "Để đăng ký cấp **Giấy xác nhận sinh viên** hoặc **Giấy tạm hoãn NVQS**:\n\n" +
-                    "1. Đăng nhập vào Cổng dịch vụ trực tuyến sinh viên: [sv.dut.udn.vn](https://sv.dut.udn.vn/).\n" +
-                    "2. Vào mục **Thủ tục Một cửa** -> **Đăng ký giấy tờ xác nhận**.\n" +
-                    "3. Chọn loại giấy cần cấp và gửi yêu cầu. Phòng Công tác Sinh viên sẽ xử lý trong vòng 01 - 02 ngày làm việc và thông báo nhận qua email trường.";
-        } else {
-            answer = "Trợ lý học vụ DUT đã ghi nhận câu hỏi của bạn. Hệ thống đang đối soát dữ liệu với kho văn bản quy chế đào tạo và chính sách sinh viên của Nhà trường. Bạn có thể tham khảo các câu hỏi thường gặp bên dưới hoặc chọn trực tiếp mục tra cứu quy chế.";
         }
 
         return ChatDto.Response.builder()
                 .answer(answer)
-                .citations(citations)
-                .suggestions(suggestions)
+                .sources(sources)
+                .suggestions(DEFAULT_SUGGESTIONS)
                 .build();
     }
 }

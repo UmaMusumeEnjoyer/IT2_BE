@@ -37,6 +37,14 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres_dut_secret}
       JWT_SECRET: ${JWT_SECRET:-DUT_IT2_SUPER_SECRET_KEY_FOR_JWT_TOKEN_SIGNING_2026_CHANGE_IN_PROD}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:80}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gemini-2.0-flash}
+      AI_GEMINI_BASE_URL: ${AI_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
+      AI_RETRIEVAL_BASE_URL: ${AI_RETRIEVAL_BASE_URL:-http://host.docker.internal:8000}
+      AI_RETRIEVAL_PATH: ${AI_RETRIEVAL_PATH:-/api/search}
+      AI_RETRIEVAL_TOP_K: ${AI_RETRIEVAL_TOP_K:-5}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-2048}
       PORT: 8080
     ports:
       - "${PORT:-8080}:8080"
