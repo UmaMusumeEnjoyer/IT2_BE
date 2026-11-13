@@ -37,6 +37,8 @@ public class SecurityConfig {
                 ).permitAll()
                 // In early development, allow public access to core APIs so FE can integrate immediately
                 .requestMatchers("/api/**").permitAll()
+                // Let Spring Boot's error dispatch through so clients get the real status (400/404/500) instead of 403
+                .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()
             );
 
