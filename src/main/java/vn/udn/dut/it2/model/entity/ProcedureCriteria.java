@@ -25,10 +25,10 @@ public class ProcedureCriteria {
     @Column(name = "grade_level", nullable = false)
     private String gradeLevel; // LOAI_XUAT_SAC, LOAI_GIOI, LOAI_KHA
 
-    @Column(name = "min_gpa", precision = 3, scale = 2, nullable = false)
+    @Column(name = "min_gpa", precision = 4, scale = 2, nullable = false)
     private BigDecimal minGpa;
 
-    @Column(name = "max_gpa", precision = 3, scale = 2)
+    @Column(name = "max_gpa", precision = 4, scale = 2)
     private BigDecimal maxGpa;
 
     @Column(name = "min_training_point", nullable = false)
