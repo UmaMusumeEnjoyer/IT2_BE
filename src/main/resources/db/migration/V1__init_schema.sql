@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS students (
     full_name VARCHAR(255) NOT NULL,
     class_name VARCHAR(100) NOT NULL,
     faculty VARCHAR(255) NOT NULL,
-    gpa NUMERIC(3, 2) DEFAULT 0.00,
+    gpa NUMERIC(4, 2) DEFAULT 0.00,
     training_point INTEGER DEFAULT 0,
     accumulated_credits INTEGER DEFAULT 0,
     total_credits INTEGER DEFAULT 135,
@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS procedure_criteria (
     id BIGSERIAL PRIMARY KEY,
     procedure_name VARCHAR(255) NOT NULL,
     grade_level VARCHAR(50) NOT NULL, -- LOAI_XUAT_SAC, LOAI_GIOI, LOAI_KHA
-    min_gpa NUMERIC(3, 2) NOT NULL,
-    max_gpa NUMERIC(3, 2),
+    min_gpa NUMERIC(4, 2) NOT NULL,
+    max_gpa NUMERIC(4, 2),
     min_training_point INTEGER NOT NULL,
     description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

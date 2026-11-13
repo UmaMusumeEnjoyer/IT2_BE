@@ -31,7 +31,7 @@ public class Student {
     @Column(nullable = false)
     private String faculty;
 
-    @Column(precision = 3, scale = 2)
+    @Column(precision = 4, scale = 2)
     private BigDecimal gpa;
 
     @Column(name = "training_point")
