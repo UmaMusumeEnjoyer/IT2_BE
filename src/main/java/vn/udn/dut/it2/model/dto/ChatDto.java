@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 
 public class ChatDto {
@@ -13,6 +14,7 @@ public class ChatDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Request {
+        @NotBlank
         private String message;
         private String studentCode;
     }
@@ -23,7 +25,7 @@ public class ChatDto {
     @Builder
     public static class Response {
         private String answer;
-        private List<Citation> citations;
+        private List<Citation> sources;
         private List<String> suggestions;
     }
 
@@ -36,6 +38,7 @@ public class ChatDto {
         private String documentTitle;
         private String clause;
         private String excerpt;
+        private Integer pageNumber;
         private String pdfUrl;
     }
 }

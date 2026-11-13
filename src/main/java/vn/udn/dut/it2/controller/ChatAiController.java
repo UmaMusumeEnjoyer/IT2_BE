@@ -2,6 +2,7 @@ package vn.udn.dut.it2.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,7 +19,7 @@ public class ChatAiController {
 
     @PostMapping("/query")
     @Operation(summary = "Gửi câu hỏi học vụ tới trợ lý AI, nhận câu trả lời kèm trích dẫn văn bản pháp quy")
-    public ResponseEntity<ChatDto.Response> queryAssistant(@RequestBody ChatDto.Request request) {
+    public ResponseEntity<ChatDto.Response> queryAssistant(@Valid @RequestBody ChatDto.Request request) {
         return ResponseEntity.ok(aiChatService.processChat(request));
     }
 }
